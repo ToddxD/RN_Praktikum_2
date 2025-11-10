@@ -12,6 +12,7 @@
 #include <sys/epoll.h>
 #include <sys/stat.h>
 #include <time.h>
+#include <dirent.h>
 
 #define SERVER "127.0.0.1"
 #define PORT 6969
@@ -55,11 +56,22 @@ void read_conn(const struct epoll_event *event) {
       //  buf[count] = '\0'; // Ende abschneiden
       //}
 
-      if(strcmp(buf, "clients\n\004") == 0) {
+      if(strcmp(buf, "clients\r\n\004") == 0) {
 
-      } else if(strcmp(buf, "files\n\004") == 0) {
+      } else if(strcmp(buf, "files\r\n\004") == 0) {
+        DIR *directory;
+        struct dirent *ent;
+        if ((directory = opendir (".")) != NULL) {
+          while ((ent = readdir (directory)) != NULL) {
+            struct stat st;
+            stat(ent->d_name, &st);
+            printf ("%s\n", ent->d_name);
+            printf("%ld\n", st.st_size);
+          }
+          closedir (directory);
 
-
+        }
+        return;
 
       } else if(strncmp(buf, "get", 3) == 0){
         char fileName[50];
