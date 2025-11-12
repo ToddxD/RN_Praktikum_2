@@ -1,1 +1,6 @@
 /cmake-build-debug
+/server.o
+/sockaddr_array.o
+/server
+/client
+
