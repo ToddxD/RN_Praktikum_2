@@ -79,7 +79,7 @@ void read_conn(const struct epoll_event *event) {
 			char *firstLineBreak = strchr(buf, '\r\n');
 			strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
 			FILE *fptr;
-			fptr = fopen(fileName, "r");
+			fptr = fopen(fileName, "r"); // TODO hier mit sendfile (macht read/write auf Kernel Ebene) arbeiten!!
 			fgets(content, 1000, fptr);
 			fclose(fptr);
 			write(connection, content, 1000);
@@ -107,7 +107,7 @@ void read_conn(const struct epoll_event *event) {
 			return;
 
 		} else if (strcmp(buf, "quit\n\004") == 0) {
-
+			// TODO
 		} else {
 			// TODO schmeiße Fehler
 		}

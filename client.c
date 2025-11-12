@@ -86,15 +86,15 @@ int main(int argc, char **argv) {
 	// put datei.txt\n\nINHALT\004
 	// quit\n\004
 
-	char *buff = malloc(MAX_LEN * sizeof(char));
-	char *paket = malloc((MAX_LEN + 3) * sizeof(char));
+	char *buff = malloc((MAX_LEN - 3) * sizeof(char));
+	char *paket = malloc(MAX_LEN * sizeof(char));
 	while (1) {
-		memset(buff, 0, MAX_LEN);
+		memset(buff, 0, (MAX_LEN - 3));
 		printf("[Client] enter command:\n");
 		int i = 0;
 		while (1) {
 			char ch = getchar();
-			if (ch == '#' || i >= MAX_LEN) {
+			if (ch == '#' || i >= (MAX_LEN - 3)) {
 				break;
 			}
 			if (ch == '\n') { // Für CR LF muss hier \r zusätzlich hinzugefügt werden.
@@ -119,6 +119,7 @@ int main(int argc, char **argv) {
 		strcpy(paket, buff);
 		strcat(paket, "\r\n\004");
 
+		// TODO Laut Aufgabe auch mehrere Pakete, wenn größer 1500
 		if (write(sock, paket, strlen(paket)) < 0) {
 			perror("Fehler beim Senden des Pakets");
 			return -1;
