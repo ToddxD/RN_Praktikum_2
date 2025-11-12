@@ -26,7 +26,7 @@ void parse_args(int argc, char **argv){
                        "  OPTIONS := { -h [ elp ] }\n"
                        "  SERVER := { < address >: < port > | < name >: < port > }\n");
                 exit(0);
-            case 'd':
+            case 'd': //just for debug
                 dflag = 1;
                 printf("Default IP used\n");
                 break;
