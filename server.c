@@ -26,6 +26,7 @@
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
 
+
 	printf("[Server] message start:\n");
 
 	char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
