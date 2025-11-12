@@ -16,11 +16,10 @@
 #include "sockaddr_array.h"
 
 #define SERVER "127.0.0.10"
-#define PORT 6969
 
 #define READ_BUF_SIZE 1500
 
-#define MAX_EVENTS 10 // Wie viele Clients gleichzeit kommunizieren können
+#define MAX_EVENTS 10 // Wie viele Clients gleichzeitig kommunizieren können
 
 #define STATUS_OK "OK"
 
@@ -114,94 +113,141 @@ void read_conn(const struct epoll_event *event) {
   }
 }
 
+long long get_dir_size(const char *path) {
+    struct stat st;
+    long long total_size = 0;
+
+    DIR *dir = opendir(path);
+    if (!dir) {
+        fprintf(stderr, "Can't open directory %s : %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        //skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char fullpath[4096];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+        if (stat(fullpath, &st) == -1) {
+            fprintf(stderr, "Error, stat %s: %s\n", fullpath, strerror(errno));
+            continue;
+        }
+
+        if (S_ISREG(st.st_mode)) {
+            total_size += st.st_size;
+        }
+    }
+
+    closedir(dir);
+
+    return total_size;
+}
+
 int main(int argc, char **argv) {
-  int index;
-  int c;
-  int port = 6969;
-  int storage_size_limit;
-  //opterr = 0;
-  char *dir = "./store";
-  struct stat st = {0};
-/*
-  //parse arguments
-  while((c = getopt(argc,argv,"p:s:1:h"))!= 1)
-    switch(c){
-    case 'p':
-      port = (int) strtol(optarg,NULL,10);
-      break;
-    case 's':
-      if( optarg[0] != '.' ){
-        printf("Incorrect directory syntax!\n");
-        break;
-      }
-      dir = optarg;
-      dir_set = 1;
-      break;
-    case '1':
-      storage_size_limit = (int) strtol(optarg,NULL,10);
-      break;
-    case 'h':
-      printf("Usage: fs_server [OPTIONS . . . ]\n"
-             " where\n"
-             " OPTIONS := { -p port | -s storage_location | -1\n"
-             " storage_size_limit | -h[elp] }\n");
-      break;
-    case '?':
-      fprintf(stderr, "Unknown Option '-%c'.\n",optopt);
-      return 1;
-    default:
-  }
+    int port = 0;
+    long long storage_size_limit = 10*1000;
+    opterr = 0;
+    char *dir = "./store";
+    struct stat st = {0};
 
-  //create storage directory, if possible
-  if(stat(dir,&st) == -1) {
-    mkdir(dir, 0700);
-  }
-*/
+    //parse arguments
+    int c;
+    while(( c = getopt(argc,argv,"p:s:1:h" )) != -1)
+        switch(c){
+            case 'p':
+                port = (int) strtol(optarg,NULL,10);
+                printf("Port %d selected\n",port);
+                break;
+            case 's':
+                if( optarg[0] != '.' ){
+                    printf("Incorrect directory syntax! Using standard directory.\n");
+                    break;
+                }
+                dir = optarg;
+                break;
+            case '1':
+                storage_size_limit = strtoll(optarg,NULL,10);
+                printf("Set storage size limit to %lld\n",storage_size_limit);
+                break;
+            case 'h':
+                printf("Usage: fs_server [OPTIONS . . . ]\n"
+                       "where\n"
+                       " OPTIONS := { -p port | -s storage_location | -1\n"
+                       " storage_size_limit in kB | -h[elp] }\n");
+                return 0;
+            case '?':
+                fprintf(stderr, "Unknown Option '-%c'. Use -h for help.\n",optopt);
+                return -1;
+            default:
+                printf("Starting server using default configuration.\n");
+        }
 
-  // TCP Socket anlegen
-  struct sockaddr_in socket_address_server;
-  memset(&socket_address_server, 0, sizeof(socket_address_server));
-  socket_address_server.sin_family = AF_INET;
-  socket_address_server.sin_port = htons(PORT);
-  socket_address_server.sin_addr.s_addr = inet_addr(SERVER);
+    //create storage directory
+    if(stat(dir,&st) == -1) {
+        mkdir(dir, 0700);
+    }
+
+    long long dirSize = get_dir_size(dir);
+
+    //check size of directory
+    if(dirSize > storage_size_limit){
+        printf("Directory exceeds size limit, %lld kB > %lld kB\n", dirSize, storage_size_limit);
+        return EXIT_FAILURE;
+    }
+
+    // TCP Socket anlegen
+    struct sockaddr_in socket_address_server;
+    memset(&socket_address_server, 0, sizeof(socket_address_server));
+    socket_address_server.sin_family = AF_INET;
+    socket_address_server.sin_port = htons(port);
+    socket_address_server.sin_addr.s_addr = inet_addr(SERVER);
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0); // vllt SOCK_STREAM|SOCK_NONBLOCK
+
+    int one = 1;
+    const int *val = &one;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, val, sizeof(one)) < 0) {
+        perror("[Server] error setsockopt IP_HDRINCL");
+        return -1;
+    }
+
+    socklen_t addr_len = sizeof(socket_address_server);
+    if(bind(sock, (struct sockaddr *)&socket_address_server, addr_len) < 0){
+        perror("[Server] bind error");
+        return -1;
+    }
+
+    getsockname(sock, (struct sockaddr *)&socket_address_server, &addr_len);
+    printf("Server listening on Port: %d\n", ntohs(socket_address_server.sin_port));
 
 
-  int sock = socket(AF_INET, SOCK_STREAM, 0); // vllt SOCK_STREAM|SOCK_NONBLOCK
-
-  int one = 1;
-  const int *val = &one;
-  if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, val, sizeof(one)) < 0) {
-    perror("[Server] error setsockopt IP_HDRINCL");
-    return -1;
-  }
-
-  if(bind(sock, (struct sockaddr *)&socket_address_server, sizeof(socket_address_server)) < 0){
-    perror("[Server] bind error");
-    return -1;
-  }
-
-  if (listen(sock, 100) < 0) {
-    perror("[Server] listen error");
-  }
+    if (listen(sock, 100) < 0) {
+        perror("[Server] listen error");
+        return -1;
+    }
 
 
-  struct epoll_event events[MAX_EVENTS]; // = calloc(maxEventCount, sizeof());
-  int epoll = epoll_create1(0);
-  if (epoll < 0) {
-    perror("[Server] error creating epoll");
-  }
+    struct epoll_event events[MAX_EVENTS]; // = calloc(maxEventCount, sizeof());
+    int epoll = epoll_create1(0);
+    if (epoll < 0) {
+        perror("[Server] error creating epoll");
+    }
 
-  struct epoll_event event;
-  event.events = EPOLLIN;
-  event.data.fd = sock;
+    struct epoll_event event;
+    event.events = EPOLLIN;
+    event.data.fd = sock;
 
-  // Socket zur epoll Liste hinzufügen
-  if (epoll_ctl(epoll, EPOLL_CTL_ADD, sock, &event) < 0) {
-    perror("[Server] error adding socket");
-  }
+    // Socket zur epoll Liste hinzufügen
+    if (epoll_ctl(epoll, EPOLL_CTL_ADD, sock, &event) < 0) {
+        perror("[Server] error adding socket");
+    }
 
-  while (1) {
-    int event_count = epoll_wait(epoll, events, MAX_EVENTS, -1);
+    while (1) {
+        int event_count = epoll_wait(epoll, events, MAX_EVENTS, -1);
 
     for (int i = 0; i < event_count; i++) {
       if ((events[i].events & EPOLLERR) ||
@@ -217,28 +263,28 @@ int main(int argc, char **argv) {
         int connection = accept(sock, (struct sockaddr *) &con_addr, &laenge);
         add_sockaddr( con_addr); // TODO Errorhandling
 
-        if (connection < 0) {
-          perror("[Server] accept error");
+                if (connection < 0) {
+                    perror("[Server] accept error");
+                }
+
+                // Die Verbindung (filedescr.) zum Client zusätzlich in die Liste packen
+                event.data.fd = connection;
+                event.events = EPOLLIN;
+                if (epoll_ctl(epoll, EPOLL_CTL_ADD, connection, &event) < 0) {
+                    perror("[Server] couldn't add connection");
+                }
+                printf("[Server] added connection to epoll\n");
+
+            } else { // Wenn das Event von der Verbindung und nicht vom socket kommt, dann kann gelesen werden
+                read_conn(events + i);
+
+                //close(sock);
+                //return 0;
+            }
         }
 
-        // Die Verbindung (filedescr.) zum Client zusätzlich in die Liste packen
-        event.data.fd = connection;
-        event.events = EPOLLIN;
-        if (epoll_ctl(epoll, EPOLL_CTL_ADD, connection, &event) < 0) {
-          perror("[Server] couldn't add connection");
-        }
-        printf("[Server] added connection to epoll\n");
-
-      } else { // Wenn das Event von der Verbindung und nicht vom socket kommt, dann kann gelesen werden
-        read_conn(events + i);
-
-        //close(sock);
-        //return 0;
-      }
     }
 
-  }
-
-  close(sock);
-  return 0;
+    close(sock);
+    return 0;
 }
