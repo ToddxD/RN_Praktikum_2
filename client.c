@@ -9,7 +9,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 
-#define SERVER "127.0.0.1"
+#define SERVER "127.0.0.10"
 #define PORT 6969
 
 #define MAX_LEN 1500
@@ -38,6 +38,7 @@ int main() {
   char* paket = malloc((MAX_LEN + 3) * sizeof(char));
   while(1) {
     memset(buff, 0, MAX_LEN);
+    printf("[Client] enter command:\n");
     int i = 0;
     while(1) {
       char ch = getchar();
@@ -73,7 +74,10 @@ int main() {
     printf("[Client] paket sent: %s\n", paket);
 
     char* buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
-    ssize_t count = read(sock, buf, READ_BUF_SIZE);
+    read(sock, buf, READ_BUF_SIZE);
+
+    printf("[Client] paket received:\n");
     printf("%s", buf);
+    printf("[Client] ---------------\n");
   }
 }

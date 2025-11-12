@@ -13,8 +13,9 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
+#include "sockaddr_array.h"
 
-#define SERVER "127.0.0.1"
+#define SERVER "127.0.0.10"
 #define PORT 6969
 
 #define READ_BUF_SIZE 1500
@@ -23,110 +24,93 @@
 
 #define STATUS_OK "OK"
 
-int str_starts(const char* str, const char* prefix) {
-  return !strncmp(str, prefix, strlen(prefix));
-}
-
-int str_ends(const char* str, const char* suffix) {
-  return !strcmp(str + strlen(str) - strlen(suffix), suffix);
-}
-
-void time_string(char* str, time_t* time) {
-  strftime(str, sizeof(str), "%x-%X", localtime(time));
-}
-
 void read_conn(const struct epoll_event *event) {
-  int done = 0;
   int connection = event->data.fd;
 
   printf("[Server] message start:\n");
-  while(1) {
 
-    char* buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
-    ssize_t count = read(connection, buf, READ_BUF_SIZE);
+  char* buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
+  ssize_t count = read(connection, buf, READ_BUF_SIZE);
 
-    if (count < 0) {
-      // If errno == EAGAIN, that means we have read all data. So go back to the main loop.
-      if (errno != EAGAIN) {
-        perror ("[Server] read");
-        done = true;
-      }
-      break;
-    } else if (count == 0) {
-      done = true;
-      break;
-    } else {
-      //if (count < READ_BUF_SIZE) {
-      //  buf[count] = '\0'; // Ende abschneiden
-      //}
-
-      if(strcmp(buf, "clients\r\n\004") == 0) {
-
-      } else if(strcmp(buf, "files\r\n\004") == 0) {
-        DIR *directory;
-        struct dirent *ent;
-        char ret[1500];
-
-        if ((directory = opendir (".")) != NULL) {
-          while ((ent = readdir (directory)) != NULL) {
-            struct stat st;
-            char* filename = ent->d_name;
-            stat(filename, &st);
-            char tim[20];
-            time_string(tim, &st.st_mtim.tv_sec);
-            sprintf(ret, "%s %s,%ldB\n", filename, tim, st.st_size);
-          }
-          write(connection, ret, sizeof(ret));
-          closedir (directory);
-        }
-        return;
-
-      } else if(strncmp(buf, "get", 3) == 0){
-        char fileName[50];
-        char content[1000];
-        char* firstSpace = strchr(buf, ' ');
-        char* firstLineBreak = strchr(buf, '\r\n');
-        strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-        FILE *fptr;
-        fptr = fopen(fileName, "r");
-        fgets(content, 1000, fptr);
-        fclose(fptr);
-        write(connection, content, 1000);
-
-      } else if(strncmp(buf, "put", 3) == 0){
-        char fileName[50];
-        char content[1000];
-        char* firstSpace = strchr(buf, ' ');
-        char* firstLineBreak = strchr(buf, '\r\n');
-        char* eOT = strchr(buf, '\004');
-        strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-        strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
-        FILE *fptr;
-        fptr = fopen(fileName, "w");
-        fprintf(fptr, "%s", content);
-        fclose(fptr);
-        printf("[Server] Fertig geschrieben!\n");
-
-        char tim[20];
-        char ret[40];
-        time_t now = time(NULL);
-        strftime(tim, 20, "%X", localtime(&now));
-        sprintf(ret, "%s\r\n%s\r\n\004", STATUS_OK, tim);
-        write(connection, ret, strlen(ret));
-        return;
-
-      } else if(strcmp(buf, "quit\n\004") == 0){
-
-      }
-      printf("%s", buf);
-      fflush(stdout);
-      usleep(1000*500);
+  if (count < 0) {
+    // If errno == EAGAIN, that means we have read all data. So go back to the main loop.
+    if (errno != EAGAIN) {
+      perror ("[Server] read");
     }
-  }
+    return;
+  } else if (count == 0) {
+    return;
+  } else {
 
-  if (done) {
-    printf("\n[Server] message end\n");
-    //close (connection);
+    if(strcmp(buf, "clients\r\n\004") == 0) {
+      char ret[1500] = {0};
+      string_sockaddrs(ret);
+      strcat(ret, "\r\n\0004");
+      write(connection, ret, sizeof(ret));
+
+      return;
+
+    } else if(strcmp(buf, "files\r\n\004") == 0) {
+      DIR *directory;
+      struct dirent *ent;
+      char ret[1500] = {0};
+
+      if ((directory = opendir (".")) != NULL) {
+        while ((ent = readdir (directory)) != NULL) {
+          struct stat st;
+          char* filename = ent->d_name;
+          stat(filename, &st);
+          char tim[30] = {0};
+          strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
+          char formatted[sizeof(tim)+sizeof(filename) + 10] = {0};
+          sprintf(formatted, "%s %s,%ldB\r\n", filename, tim, st.st_size);
+          strcat(ret,formatted);
+        }
+        strcat(ret, "\r\n\004");
+        write(connection, ret, sizeof(ret));
+        closedir (directory);
+      }
+      return;
+
+    } else if(strncmp(buf, "get", 3) == 0){
+      char fileName[50];
+      char content[1000];
+      char* firstSpace = strchr(buf, ' ');
+      char* firstLineBreak = strchr(buf, '\r\n');
+      strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+      FILE *fptr;
+      fptr = fopen(fileName, "r");
+      fgets(content, 1000, fptr);
+      fclose(fptr);
+      write(connection, content, 1000);
+
+    } else if(strncmp(buf, "put", 3) == 0){
+      char fileName[50];
+      char content[1000];
+      char* firstSpace = strchr(buf, ' ');
+      char* firstLineBreak = strchr(buf, '\r\n');
+      char* eOT = strchr(buf, '\004');
+      strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+      strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
+      FILE *fptr;
+      fptr = fopen(fileName, "w");
+      fprintf(fptr, "%s", content);
+      fclose(fptr);
+      printf("[Server] Fertig geschrieben!\n");
+
+      char tim[20];
+      char ret[40];
+      time_t now = time(NULL);
+      strftime(tim, 20, "%X", localtime(&now));
+      sprintf(ret, "%s\r\n%s\r\n\004", STATUS_OK, tim);
+      write(connection, ret, strlen(ret));
+      return;
+
+    } else if(strcmp(buf, "quit\n\004") == 0){
+
+    } else {
+      // TODO schmeiße Fehler
+    }
   }
 }
 
@@ -135,7 +119,7 @@ int main(int argc, char **argv) {
   int c;
   int port = 6969;
   int storage_size_limit;
-  opterr = 0;
+  //opterr = 0;
   char *dir = "./store";
   struct stat st = {0};
 /*
@@ -227,9 +211,11 @@ int main(int argc, char **argv) {
         printf("[Server] epoll error\n");
         close(events[i].data.fd);
       } else if (events[i].data.fd == sock) { // Event kommt vom Socket
-        socklen_t laenge = sizeof(socket_address_server);
+        struct sockaddr_in con_addr;
+        socklen_t laenge = sizeof(con_addr);
         // Handshake
-        int connection = accept(sock, (struct sockaddr *)&socket_address_server, &laenge);
+        int connection = accept(sock, (struct sockaddr *) &con_addr, &laenge);
+        add_sockaddr( con_addr); // TODO Errorhandling
 
         if (connection < 0) {
           perror("[Server] accept error");
