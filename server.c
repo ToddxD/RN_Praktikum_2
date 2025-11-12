@@ -31,6 +31,10 @@ int str_ends(const char* str, const char* suffix) {
   return !strcmp(str + strlen(str) - strlen(suffix), suffix);
 }
 
+void time_string(char* str, time_t* time) {
+  strftime(str, sizeof(str), "%x-%X", localtime(time));
+}
+
 void read_conn(const struct epoll_event *event) {
   int done = 0;
   int connection = event->data.fd;
@@ -61,15 +65,19 @@ void read_conn(const struct epoll_event *event) {
       } else if(strcmp(buf, "files\r\n\004") == 0) {
         DIR *directory;
         struct dirent *ent;
+        char ret[1500];
+
         if ((directory = opendir (".")) != NULL) {
           while ((ent = readdir (directory)) != NULL) {
             struct stat st;
-            stat(ent->d_name, &st);
-            printf ("%s\n", ent->d_name);
-            printf("%ld\n", st.st_size);
+            char* filename = ent->d_name;
+            stat(filename, &st);
+            char tim[20];
+            time_string(tim, &st.st_mtim.tv_sec);
+            sprintf(ret, "%s %s,%ldB\n", filename, tim, st.st_size);
           }
+          write(connection, ret, sizeof(ret));
           closedir (directory);
-
         }
         return;
 
