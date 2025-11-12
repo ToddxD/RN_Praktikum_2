@@ -121,15 +121,49 @@ void read_conn(const struct epoll_event *event) {
     }
 }
 
+long long get_dir_size(const char *path) {
+    struct stat st;
+    long long total_size = 0;
+
+    DIR *dir = opendir(path);
+    if (!dir) {
+        fprintf(stderr, "Can't open directory %s : %s\n", path, strerror(errno));
+        return -1;
+    }
+
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        //skip . and ..
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        char fullpath[4096];
+        snprintf(fullpath, sizeof(fullpath), "%s/%s", path, entry->d_name);
+
+        if (stat(fullpath, &st) == -1) {
+            fprintf(stderr, "Error, stat %s: %s\n", fullpath, strerror(errno));
+            continue;
+        }
+
+        if (S_ISREG(st.st_mode)) {
+            total_size += st.st_size;
+        }
+    }
+
+    closedir(dir);
+
+    return total_size;
+}
+
 int main(int argc, char **argv) {
-    int c;
     int port = 0;
-    int storage_size_limit;
+    long long storage_size_limit = 10*1000;
     opterr = 0;
     char *dir = "./store";
     struct stat st = {0};
 
     //parse arguments
+    int c;
     while(( c = getopt(argc,argv,"p:s:1:h" )) != -1)
         switch(c){
             case 'p':
@@ -144,19 +178,20 @@ int main(int argc, char **argv) {
                 dir = optarg;
                 break;
             case '1':
-                storage_size_limit = (int) strtol(optarg,NULL,10);
+                storage_size_limit = strtoll(optarg,NULL,10);
+                printf("Set storage size limit to %lld\n",storage_size_limit);
                 break;
             case 'h':
                 printf("Usage: fs_server [OPTIONS . . . ]\n"
                        "where\n"
                        " OPTIONS := { -p port | -s storage_location | -1\n"
-                       " storage_size_limit | -h[elp] }\n");
+                       " storage_size_limit in kB | -h[elp] }\n");
                 return 0;
             case '?':
                 fprintf(stderr, "Unknown Option '-%c'. Use -h for help.\n",optopt);
                 return -1;
             default:
-                printf("No options selected, using default parameters.\n");
+                printf("Starting server using default configuration.\n");
         }
 
     //create storage directory
@@ -164,6 +199,13 @@ int main(int argc, char **argv) {
         mkdir(dir, 0700);
     }
 
+    long long dirSize = get_dir_size(dir);
+
+    //check size of directory
+    if(dirSize > storage_size_limit){
+        printf("Directory exceeds size limit, %lld kB > %lld kB\n", dirSize, storage_size_limit);
+        return EXIT_FAILURE;
+    }
 
     // TCP Socket anlegen
     struct sockaddr_in socket_address_server;
