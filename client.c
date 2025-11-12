@@ -21,14 +21,14 @@ void parse_args(int argc, char **argv){
     while(( c = getopt(argc,argv,"hd" )) != -1){
         switch(c) {
             case 'h':
-                printf("Usage : fs_client [ OPTIONS ...] SERVER\n"
+                printf("Usage : fs_client [OPTIONS ...] SERVER\n"
                        "where\n"
-                       "  OPTIONS := { -h [ elp ] }\n"
-                       "  SERVER := { < address >: < port > | < name >: < port > }\n");
+                       "  OPTIONS := { -h[elp] }\n"
+                       "  SERVER := { <address> : <port> | <name> : <port> }\n");
                 exit(0);
             case 'd': //just for debug
                 dflag = 1;
-                printf("Default IP used\n");
+                printf("using default IP-Address\n");
                 break;
             case '?':
                 fprintf(stderr,"Unknown option '-%c'. Use -h for help.\n",optopt);
@@ -46,26 +46,28 @@ int main(int argc, char **argv) {
     parse_args(argc,argv);
 
     if (optind >= argc) {
-        fprintf(stderr, "Error: Too few arguments. Use -h for help.\n");
+        fprintf(stderr, "Error: Unexpected or no arguments. Use -h for help.\n");
         return EXIT_FAILURE;
     }
 
     char *arg = argv[optind];
     char *colon = strchr(arg, ':');
     if (!colon) {
-        fprintf(stderr, "Error: Unexpected argument. Use -h for help.\n");
+        fprintf(stderr, "Error: Unexpected arguments. Use -h for help.\n");
         return EXIT_FAILURE;
     }
 
     printf("Connecting to Server %s ...\n", argv[optind]);
 
+    //Get IP-Address
     size_t ip_len = colon - arg;
     strncpy(ip_str, arg, ip_len);
     ip_str[ip_len] = '\0';
+
+    //get Port
     port = (int) strtol(colon + 1,NULL,10);
 
-    //printf("IP: %s Port: %d\n",ip_str,port);
-
+    //TCP Socket
     struct sockaddr_in socket_address_server;
     memset(&socket_address_server, 0, sizeof(socket_address_server));
     socket_address_server.sin_family = AF_INET;
