@@ -6,6 +6,8 @@ set(CMAKE_C_STANDARD 17)
 add_executable(Praktikum2 #main.c
         #becke_beispiel.c
         server.c
+        sockaddr_array.c
+        sockaddr_array.h
         #client.c
         #client.c
         #nocheinbeispiel.c
