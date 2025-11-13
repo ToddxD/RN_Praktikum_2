@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
+#include <regex.h>
 
 #define SERVER "127.0.0.1"
 #define PORT 6969
@@ -22,6 +23,9 @@
 #define MAX_EVENTS 10 // Wie viele Clients gleichzeit kommunizieren können
 
 #define STATUS_OK "OK"
+#define REGEX_PUT "[a-zA-Z0-9_-]"
+#define REGEX_GET "get [a-zA-Z0-9_-]+\\.txt\\r\\n\\004"
+
 
 int str_starts(const char* str, const char* prefix) {
   return !strncmp(str, prefix, strlen(prefix));
@@ -32,8 +36,21 @@ int str_ends(const char* str, const char* suffix) {
 }
 
 void read_conn(const struct epoll_event *event) {
+
   int done = 0;
   int connection = event->data.fd;
+  char* patternPut = REGEX_PUT;
+  regex_t regexGet;
+  regex_t regexPut;
+
+  int retiGet = regcomp(&regexGet, REGEX_GET, REG_EXTENDED);
+  if (retiGet != 0) {
+    fprintf(stderr, "regcomp failed\n");
+  }
+  int retiPut = regcomp(&regexPut, patternPut, REG_EXTENDED);
+  if (retiPut != 0) {
+    fprintf(stderr, "regcomp failed\n");
+  }
 
   printf("[Server] message start:\n");
   while(1) {
@@ -73,25 +90,44 @@ void read_conn(const struct epoll_event *event) {
         }
         return;
 
-      } else if(strncmp(buf, "get", 3) == 0){
+      } else if(strncmp(buf, "get", 3) == 0) {
         char fileName[50];
         char content[1000];
         char* firstSpace = strchr(buf, ' ');
         char* firstLineBreak = strchr(buf, '\r\n');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-        FILE *fptr;
-        fptr = fopen(fileName, "r");
-        fgets(content, 1000, fptr);
-        fclose(fptr);
-        write(connection, content, 1000);
+        char* path = realpath(fileName, NULL);
+        if (path == NULL) {
+          perror("[Server] Datei nicht gefunden");
+        } else {
+          FILE *fptr;
+          fptr = fopen(fileName, "r");
+          fgets(content, 1000, fptr);
+          fclose(fptr);
+          char tim[20];
+          struct stat attrib;
+          stat(path, &attrib);
+          strftime(tim, 20, "%X", localtime(&attrib.st_mtime));
+          char ret[1500];
+          sprintf(ret, "Datei-Attribute: \n Zuletzt bearbeitet: %s\nDateigröße: %lu\r\nInhalt: %s\r\n\004", tim, attrib.st_size , content);
+          write(connection, ret, strlen(ret));
+          return;
+        }
 
-      } else if(strncmp(buf, "put", 3) == 0){
-        char fileName[50];
-        char content[1000];
+      } else if(strncmp(buf, "put", 3) == 0) {
+        char fileName[50] = {0};
+        char content[1000] = {0};
         char* firstSpace = strchr(buf, ' ');
         char* firstLineBreak = strchr(buf, '\r\n');
         char* eOT = strchr(buf, '\004');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+        int laenge = strlen(fileName);
+        printf("%d\n", regexec(&regexPut, &fileName[0], 0, NULL,0 ));
+        if(fileName[laenge-4] != '.' || fileName[laenge-3] != 't' || fileName[laenge-2] != 'x' || fileName[laenge-1] != 't') {
+          printf("falsches Dateiformat");
+        } else {
+          printf("Korrekt: %s\n", fileName);
+        }
         strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
         FILE *fptr;
         fptr = fopen(fileName, "w");
@@ -108,11 +144,18 @@ void read_conn(const struct epoll_event *event) {
         return;
 
       } else if(strcmp(buf, "quit\n\004") == 0){
-
+        close(connection);
+        fflush(stdout);
+        return;
+      } else {
+        write(connection, "Befehl nicht gefunden", strlen("Befehl nicht gefunden"));
+        fflush(stdout);
+        return;
       }
       printf("%s", buf);
       fflush(stdout);
       usleep(1000*500);
+
     }
   }
 

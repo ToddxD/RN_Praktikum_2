@@ -7,5 +7,6 @@ add_executable(Praktikum2 #main.c
         #becke_beispiel.c
         server.c
         #client.c
+        #client.c
         #nocheinbeispiel.c
 )

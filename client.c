@@ -6,6 +6,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <regex.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
@@ -14,6 +15,7 @@
 
 #define MAX_LEN 1500
 #define READ_BUF_SIZE 1500
+#define REGEX_PUT "put[[:space:]][a-zA-Z0-9_-]*\\.txt\\r\\n\\r\\n[\\0-\\377]*\\r\\n\\004.*"
 
 int main() {
   struct sockaddr_in socket_address_server;
@@ -33,11 +35,17 @@ int main() {
   // get datei.txt\n\004
   // put datei.txt\n\nINHALT\004
   // quit\n\004
-
+  const char* reg = REGEX_PUT;
   char* buff = malloc(MAX_LEN * sizeof(char));
   char* paket = malloc((MAX_LEN + 3) * sizeof(char));
+  regex_t regexPut;
+  int ret = regcomp(&regexPut, reg, REG_EXTENDED);
+  if (ret == 0) {
+    printf("Regular expression compiled successfully\n");
+  }
   while(1) {
     memset(buff, 0, MAX_LEN);
+    memset(paket, 0, MAX_LEN);
     int i = 0;
     while(1) {
       char ch = getchar();
@@ -65,6 +73,11 @@ int main() {
 
     strcpy(paket,buff);
     strcat(paket,"\r\n\004");
+    int ret = regexec(&regexPut, paket, 0, NULL, 0);
+    printf("%s\n", paket);
+    if (ret == REG_NOMATCH) {
+      printf("[Client] NO regular expression found\n");
+    }
 
     if (write(sock, paket, strlen(paket)) < 0) {
       perror("Fehler beim Senden des Pakets");
