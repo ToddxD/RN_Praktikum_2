@@ -40,6 +40,8 @@ char* patternPut = "^[).,_a-zA-Z0-9(-]+$";
 regex_t regexGet;
 regex_t regexPut;
 
+char *dir = "./store";
+
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
 	printf("[Server] message start:\n");
@@ -96,8 +98,10 @@ void read_conn(const struct epoll_event *event) {
         	write(connection, "Datei nicht gefunden, bitte Namen überprüfen\n", strlen("Datei nicht gefunden, bitte Namen überprüfen\n"));
         	return;
         } else { */
-	        FILE *fptr;
-        	fptr = fopen(fileName, "r");
+      		char* realPathName = realpath(dir, NULL);
+      		strcat(realPathName, "/");
+      		strcat(realPathName, fileName);
+        	FILE *fptr = fopen(realPathName, "r");
         	fgets(content, 1000, fptr);
         	fclose(fptr);
         	char tim[20];
@@ -119,9 +123,13 @@ void read_conn(const struct epoll_event *event) {
       	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL,0 );
         printf("%d\n", dateiNameTest);
       	if(dateiNameTest == 0) {
+      		char* realPathName = realpath(dir, NULL);
+      		strcat(realPathName, "/");
+      		strcat(realPathName, fileName);
+      		printf("%s\n", realPathName);
       		strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
       		FILE *fptr;
-      		fptr = fopen(fileName, "w");
+      		fptr = fopen(realPathName, "w");
       		fprintf(fptr, "%s", content);
       		fclose(fptr);
       		printf("[Server] Fertig geschrieben!\n");
@@ -205,7 +213,6 @@ int main(int argc, char **argv) {
 	int port = 0;
 	long long storage_size_limit = 10 * 1000;
 	opterr = 0;
-	char *dir = "./store";
 	struct stat st = {0};
 
 	//parse arguments
@@ -244,7 +251,8 @@ int main(int argc, char **argv) {
 	if (stat(dir, &st) == -1) {
 		mkdir(dir, 0700);
 	}
-
+	printf("%s\n", dir);
+	printf("%s\n", realpath(dir, NULL));
 	long long dirSize = get_dir_size(dir);
 
 	//check size of directory
