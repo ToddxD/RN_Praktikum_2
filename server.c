@@ -23,32 +23,28 @@
 #define MAX_EVENTS 10 // Wie viele Clients gleichzeitig kommunizieren können
 
 #define STATUS_OK "OK"
-#define REGEX_PUT "[a-zA-Z0-9_-]"
+#define REGEX_PUT "[^~./]+"
 #define REGEX_GET "get [a-zA-Z0-9_-]+\\.txt\\r\\n\\004"
 
+int testDateiNameAufEndung(char* fileName) {
+	int laenge = strlen(fileName);
+	if(fileName[laenge-4] != '.' || fileName[laenge-3] != 't' || fileName[laenge-2] != 'x' || fileName[laenge-1] != 't') {
+		printf("falsches Dateiformat");
+	} else {
+		printf("Korrekt: %s\n", fileName);
+	}
+}
+
+
+char* patternPut = "^[).,_a-zA-Z0-9(-]+$";
+regex_t regexGet;
+regex_t regexPut;
 
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
-
-  char* patternPut = REGEX_PUT;
-  regex_t regexGet;
-  regex_t regexPut;
-
-  int retiGet = regcomp(&regexGet, REGEX_GET, REG_EXTENDED);
-  if (retiGet != 0) {
-    fprintf(stderr, "regcomp failed\n");
-  }
-  int retiPut = regcomp(&regexPut, patternPut, REG_EXTENDED);
-  if (retiPut != 0) {
-    fprintf(stderr, "regcomp failed\n");
-  }
-
-
 	printf("[Server] message start:\n");
-
 	char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
 	ssize_t count = read(connection, buf, READ_BUF_SIZE);
-
 	if (count < 0) {
 		// If errno == EAGAIN, that means we have read all data. So go back to the main loop.
 		if (errno != EAGAIN) {
@@ -58,13 +54,11 @@ void read_conn(const struct epoll_event *event) {
 	} else if (count == 0) {
 		return;
 	} else {
-
 		if (strcmp(buf, "clients\r\n\004") == 0) {
 			char ret[1500] = {0};
 			string_sockaddrs(ret);
 			strcat(ret, "\r\n\0004");
 			write(connection, ret, sizeof(ret));
-
 			return;
 
 		} else if (strcmp(buf, "files\r\n\004") == 0) {
@@ -95,24 +89,26 @@ void read_conn(const struct epoll_event *event) {
         char* firstSpace = strchr(buf, ' ');
         char* firstLineBreak = strchr(buf, '\r\n');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-        char* path = realpath(fileName, NULL);
+      	//sprintf(fileName, "./%s", fileName);
+        /*char* path = realpath(fileName, NULL);
         if (path == NULL) {
           perror("[Server] Datei nicht gefunden");
-        } else {
-          FILE *fptr;
-          fptr = fopen(fileName, "r");
-          fgets(content, 1000, fptr);
-          fclose(fptr);
-          char tim[20];
-          struct stat attrib;
-          stat(path, &attrib);
-          strftime(tim, 20, "%X", localtime(&attrib.st_mtime));
-          char ret[1500];
-          sprintf(ret, "Datei-Attribute: \n Zuletzt bearbeitet: %s\nDateigröße: %lu\r\nInhalt: %s\r\n\004", tim, attrib.st_size , content);
-          write(connection, ret, strlen(ret));
-          return;
-        }
-
+        	write(connection, "Datei nicht gefunden, bitte Namen überprüfen\n", strlen("Datei nicht gefunden, bitte Namen überprüfen\n"));
+        	return;
+        } else { */
+	        FILE *fptr;
+        	fptr = fopen(fileName, "r");
+        	fgets(content, 1000, fptr);
+        	fclose(fptr);
+        	char tim[20];
+        	struct stat attrib;
+        	stat(fileName, &attrib);
+        	strftime(tim, 20, "%X", localtime(&attrib.st_mtime));
+        	char ret[1500];
+        	sprintf(ret, "Datei-Attribute: \nZuletzt bearbeitet: %s\nDateigröße: %lu\r\nInhalt: %s\r\n\004", tim, attrib.st_size , content);
+        	write(connection, ret, strlen(ret));
+        	return;
+        //}
       } else if(strncmp(buf, "put", 3) == 0) {
         char fileName[50] = {0};
         char content[1000] = {0};
@@ -120,20 +116,20 @@ void read_conn(const struct epoll_event *event) {
         char* firstLineBreak = strchr(buf, '\r\n');
         char* eOT = strchr(buf, '\004');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-        int laenge = strlen(fileName);
-        printf("%d\n", regexec(&regexPut, &fileName[0], 0, NULL,0 ));
-        if(fileName[laenge-4] != '.' || fileName[laenge-3] != 't' || fileName[laenge-2] != 'x' || fileName[laenge-1] != 't') {
-          printf("falsches Dateiformat");
-        } else {
-          printf("Korrekt: %s\n", fileName);
-        }
-        strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
-        FILE *fptr;
-        fptr = fopen(fileName, "w");
-        fprintf(fptr, "%s", content);
-        fclose(fptr);
-        printf("[Server] Fertig geschrieben!\n");
-
+      	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL,0 );
+        printf("%d\n", dateiNameTest);
+      	if(dateiNameTest == 0) {
+      		strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
+      		FILE *fptr;
+      		fptr = fopen(fileName, "w");
+      		fprintf(fptr, "%s", content);
+      		fclose(fptr);
+      		printf("[Server] Fertig geschrieben!\n");
+      	} else {
+      		write(connection, "Dateiname ungültig\n", strlen("Dateiname ungültig\n"));
+      		fflush(stdout);
+      		return;
+      	}
 			char tim[20];
 			char ret[40];
 			time_t now = time(NULL);
@@ -147,6 +143,7 @@ void read_conn(const struct epoll_event *event) {
         fflush(stdout);
         return;
       } else {
+      	printf("%s", buf);
         write(connection, "Befehl nicht gefunden", strlen("Befehl nicht gefunden"));
         fflush(stdout);
         return;
@@ -158,8 +155,8 @@ void read_conn(const struct epoll_event *event) {
     }
   }
 
-	}
-}
+
+
 
 long long get_dir_size(const char *path) {
 	struct stat st;
@@ -196,6 +193,15 @@ long long get_dir_size(const char *path) {
 }
 
 int main(int argc, char **argv) {
+
+	int retiGet = regcomp(&regexGet, REGEX_GET, REG_EXTENDED);
+	if (retiGet != 0) {
+		fprintf(stderr, "regcomp failed\n");
+	}
+	int retiPut = regcomp(&regexPut, patternPut, REG_EXTENDED);
+	if (retiPut != 0) {
+		fprintf(stderr, "regcomp failed\n");
+	}
 	int port = 0;
 	long long storage_size_limit = 10 * 1000;
 	opterr = 0;
