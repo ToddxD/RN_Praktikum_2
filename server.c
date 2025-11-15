@@ -25,6 +25,7 @@
 #define STATUS_OK "OK"
 #define REGEX_PUT "[^~./]+"
 #define REGEX_GET "get [a-zA-Z0-9_-]+\\.txt\\r\\n\\004"
+#define RESP_FNOTFOUND "Datei nicht gefunden, bitte Namen überprüfen\n"
 
 int testDateiNameAufEndung(char* fileName) {
 	int laenge = strlen(fileName);
@@ -33,6 +34,7 @@ int testDateiNameAufEndung(char* fileName) {
 	} else {
 		printf("Korrekt: %s\n", fileName);
 	}
+	return laenge;
 }
 
 
@@ -44,15 +46,16 @@ char *dir = "./store";
 
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
+	char *buf = calloc(READ_BUF_SIZE, sizeof(char));
 	printf("[Server] message start:\n");
-	char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
+	 // ggf. auf MTU Size anpassen?
 	ssize_t count = read(connection, buf, READ_BUF_SIZE);
 	if (count < 0) {
 		// If errno == EAGAIN, that means we have read all data. So go back to the main loop.
 		if (errno != EAGAIN) {
 			perror("[Server] read");
+			return;
 		}
-		return;
 	} else if (count == 0) {
 		return;
 	} else {
@@ -63,7 +66,7 @@ void read_conn(const struct epoll_event *event) {
 			write(connection, ret, sizeof(ret));
 			return;
 
-		} else if (strcmp(buf, "files\r\n\004") == 0) {
+		} if (strcmp(buf, "files\r\n\004") == 0) {
 			DIR *directory;
 			struct dirent *ent;
 			char ret[1500] = {0};
@@ -85,24 +88,28 @@ void read_conn(const struct epoll_event *event) {
 			}
 			return;
 
-      } else if(strncmp(buf, "get", 3) == 0) {
-        char fileName[50];
-        char content[1000];
+      } if(strncmp(buf, "get", 3) == 0) {
+        char fileName[50] = {0};
+        char content[READ_BUF_SIZE] = "";
+      	char lineBuf[READ_BUF_SIZE] = {0};
         char* firstSpace = strchr(buf, ' ');
         char* firstLineBreak = strchr(buf, '\r\n');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
-      	//sprintf(fileName, "./%s", fileName);
-        /*char* path = realpath(fileName, NULL);
-        if (path == NULL) {
-          perror("[Server] Datei nicht gefunden");
-        	write(connection, "Datei nicht gefunden, bitte Namen überprüfen\n", strlen("Datei nicht gefunden, bitte Namen überprüfen\n"));
-        	return;
-        } else { */
-      		char* realPathName = realpath(dir, NULL);
-      		strcat(realPathName, "/");
-      		strcat(realPathName, fileName);
-        	FILE *fptr = fopen(realPathName, "r");
-        	fgets(content, 1000, fptr);
+      	//Absoluten Pfad herausfinden
+      	char* realPathName = realpath(dir, NULL);
+      	strcat(realPathName, "/");
+      	strcat(realPathName, fileName);
+      	FILE *fptr = fopen(realPathName, "r");
+      	//Prüfen, ob Datei existiert, falls nicht, wird dies geantwortet
+      	if(fptr == NULL) {
+      		perror("[Server] Datei unbekannt:");
+      		write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
+      		fflush(stdout);
+      		return;
+      	}
+      		while(fgets(lineBuf, READ_BUF_SIZE, fptr) != NULL) {
+      			strcat(content, lineBuf);
+      		}
         	fclose(fptr);
         	char tim[20];
         	struct stat attrib;
@@ -112,22 +119,24 @@ void read_conn(const struct epoll_event *event) {
         	sprintf(ret, "Datei-Attribute: \nZuletzt bearbeitet: %s\nDateigröße: %lu\r\nInhalt: %s\r\n\004", tim, attrib.st_size , content);
         	write(connection, ret, strlen(ret));
         	return;
-        //}
-      } else if(strncmp(buf, "put", 3) == 0) {
+      }
+		if(strncmp(buf, "put", 3) == 0) {
         char fileName[50] = {0};
         char content[1000] = {0};
         char* firstSpace = strchr(buf, ' ');
         char* firstLineBreak = strchr(buf, '\r\n');
         char* eOT = strchr(buf, '\004');
         strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+			//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
       	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL,0 );
-        printf("%d\n", dateiNameTest);
       	if(dateiNameTest == 0) {
+      		//Absoluten Pfad für die Datei herausfinden
       		char* realPathName = realpath(dir, NULL);
       		strcat(realPathName, "/");
       		strcat(realPathName, fileName);
       		printf("%s\n", realPathName);
       		strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
+      		//Datei anlegen und Inhalt hineinschreiben
       		FILE *fptr;
       		fptr = fopen(realPathName, "w");
       		fprintf(fptr, "%s", content);
@@ -146,20 +155,14 @@ void read_conn(const struct epoll_event *event) {
 			write(connection, ret, strlen(ret));
 			return;
 
-      } else if(strcmp(buf, "quit\n\004") == 0){
+      } if(strcmp(buf, "quit\n\004") == 0){
         close(connection);
         fflush(stdout);
         return;
-      } else {
+      }
       	printf("%s", buf);
         write(connection, "Befehl nicht gefunden", strlen("Befehl nicht gefunden"));
         fflush(stdout);
-        return;
-      }
-      printf("%s", buf);
-      fflush(stdout);
-      usleep(1000*500);
-
     }
   }
 
