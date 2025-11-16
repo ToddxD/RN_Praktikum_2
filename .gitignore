@@ -2,3 +2,7 @@
 /*.o
 /fs_client
 /fs_server
+/store/*
+.vscode
+
+
