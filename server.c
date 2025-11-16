@@ -14,6 +14,8 @@
 #include <time.h>
 #include <dirent.h>
 #include "sockaddr_array.h"
+#include <sys/sendfile.h>
+#include <fcntl.h>
 
 #define SERVER "127.0.0.10"
 
@@ -22,6 +24,9 @@
 #define MAX_EVENTS 10 // Wie viele Clients gleichzeitig kommunizieren können
 
 #define STATUS_OK "OK"
+
+long long storage_size_limit = 10 * 1000;
+char *dir = "./store";
 
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
@@ -47,15 +52,12 @@ void read_conn(const struct epoll_event *event) {
 			string_sockaddrs(ret);
 			strcat(ret, "\r\n\0004");
 			write(connection, ret, sizeof(ret));
-
-			return;
-
 		} else if (strcmp(buf, "files\r\n\004") == 0) {
 			DIR *directory;
 			struct dirent *ent;
 			char ret[1500] = {0};
 
-			if ((directory = opendir(".")) != NULL) {
+			if ((directory = opendir(dir)) != NULL) {
 				while ((ent = readdir(directory)) != NULL) {
 					struct stat st;
 					char *filename = ent->d_name;
@@ -70,10 +72,59 @@ void read_conn(const struct epoll_event *event) {
 				write(connection, ret, sizeof(ret));
 				closedir(directory);
 			}
-			return;
-
 		} else if (strncmp(buf, "get", 3) == 0) {
-			char fileName[50];
+			char fileName[100] = {0};
+			char *firstSpace = strchr(buf, ' ');
+			char *firstLineBreak = strchr(buf, '\r\n');
+
+			if (firstSpace == NULL || firstLineBreak == NULL) {
+				char *ret = "invalid command\r\n\004";
+				write(connection, ret, strlen(ret));
+				free(buf);
+				return;
+			}
+
+			int fileNameLen = firstLineBreak - firstSpace - 1;
+			strcpy(fileName, dir);
+			strcat(fileName, "/");
+			strncat(fileName, firstSpace + 1, fileNameLen);
+			fileName[strlen(dir) + fileNameLen] = '\0';
+
+			char* ret = NULL;
+			size_t size = 0;
+			FILE *ret_stream = open_memstream(&ret, &size); 
+			printf("|%s|\n", fileName);
+			struct stat st;
+			if (stat(fileName, &st) == -1) {
+				perror("stat failed");
+				fprintf(ret_stream, "file not found\r\n\004");
+				fclose(ret_stream);
+				write(connection, ret, size);
+				free(ret);
+				free(buf);
+				return;
+			}
+			char tim[30] = {0};
+			strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
+			fprintf(ret_stream, "%s,%ldB\r\n\r\n", tim, st.st_size);
+			char chunk[512];
+    		size_t n;
+			FILE *fp = fopen(fileName, "r");
+			if (fp == NULL) {
+				perror("fopen failed");  // Shows why fopen failed (file not found, permissions, etc.)
+				return;	
+			}
+			while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
+				fwrite(chunk, 1, n, ret_stream);
+			}
+			fclose(fp);
+			fprintf(ret_stream, "\004");
+			fclose(ret_stream);
+			write(connection, ret, size);
+			free(ret);
+
+
+			/*char fileName[50];
 			char content[1000];
 			char *firstSpace = strchr(buf, ' ');
 			char *firstLineBreak = strchr(buf, '\r\n');
@@ -82,8 +133,7 @@ void read_conn(const struct epoll_event *event) {
 			fptr = fopen(fileName, "r"); // TODO hier mit sendfile (macht read/write auf Kernel Ebene) arbeiten!!
 			fgets(content, 1000, fptr);
 			fclose(fptr);
-			write(connection, content, 1000);
-
+			write(connection, content, 1000);*/
 		} else if (strncmp(buf, "put", 3) == 0) {
 			char fileName[50];
 			char content[1000];
@@ -93,7 +143,7 @@ void read_conn(const struct epoll_event *event) {
 			strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
 			strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
 			FILE *fptr;
-			fptr = fopen(fileName, "w");
+			fptr = fopen(fileName, "w"); // TODO prepend dir
 			fprintf(fptr, "%s", content);
 			fclose(fptr);
 			printf("[Server] Fertig geschrieben!\n");
@@ -104,14 +154,15 @@ void read_conn(const struct epoll_event *event) {
 			strftime(tim, 20, "%X", localtime(&now));
 			sprintf(ret, "%s\r\n%s\r\n\004", STATUS_OK, tim);
 			write(connection, ret, strlen(ret));
-			return;
-
-		} else if (strcmp(buf, "quit\n\004") == 0) {
-			// TODO
+		} else if (strcmp(buf, "quit\r\n\004") == 0) {
+			close(connection);
+			remove_sockaddr(connection);
 		} else {
-			// TODO schmeiße Fehler
+			char *ret = "invalid command\r\n\004";
+			write(connection, ret, strlen(ret));
 		}
 	}
+	free(buf);
 }
 
 long long get_dir_size(const char *path) {
@@ -150,9 +201,7 @@ long long get_dir_size(const char *path) {
 
 int main(int argc, char **argv) {
 	int port = 0;
-	long long storage_size_limit = 10 * 1000;
 	opterr = 0;
-	char *dir = "./store";
 	struct stat st = {0};
 
 	//parse arguments
@@ -261,7 +310,7 @@ int main(int argc, char **argv) {
 				socklen_t laenge = sizeof(con_addr);
 				// Handshake
 				int connection = accept(sock, (struct sockaddr *) &con_addr, &laenge);
-				add_sockaddr(con_addr); // TODO Errorhandling
+				add_sockaddr(con_addr, connection); // TODO Errorhandling
 
 				if (connection < 0) {
 					perror("[Server] accept error");

@@ -6,8 +6,8 @@
 #define MAX_ADDRS 10
 
 // --- Funktionsprototypen ---
-int add_sockaddr(struct sockaddr_in addr);
-int remove_sockaddr(struct sockaddr_in addr);
+int add_sockaddr(struct sockaddr_in addr, int fd);
+int remove_sockaddr(int fd);
 void string_sockaddrs(char* str);
 
 #endif // SOCKADDR_ARRAY_H

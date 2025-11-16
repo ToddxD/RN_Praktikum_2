@@ -130,7 +130,6 @@ int main(int argc, char **argv) {
 		read(sock, buf, READ_BUF_SIZE);
 
 		printf("[Client] paket received:\n");
-		printf("%s", buf);
-		printf("[Client] ---------------\n");
+		printf("%s\n", buf);
 	}
 }

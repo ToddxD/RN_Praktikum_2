@@ -1,6 +1,6 @@
 # Compiler und Flags
 CC = gcc
-CFLAGS = -Wall -Wno-multichar
+CFLAGS = -Wall -Wno-multichar -std=gnu17
 
 # Ziele (Executables)
 TARGET_SERVER = fs_server
