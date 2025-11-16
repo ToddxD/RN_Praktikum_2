@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <dirent.h>
+#include <regex.h>
 #include "sockaddr_array.h"
 #include <sys/sendfile.h>
 #include <fcntl.h>
@@ -24,6 +25,24 @@
 #define MAX_EVENTS 10 // Wie viele Clients gleichzeitig kommunizieren können
 
 #define STATUS_OK "OK"
+#define REGEX_PUT "[^~./]+"
+#define REGEX_GET "get [a-zA-Z0-9_-]+\\.txt\\r\\n\\004"
+#define RESP_FNOTFOUND "Datei nicht gefunden, bitte Namen überprüfen\n"
+
+int testDateiNameAufEndung(char* fileName) {
+	int laenge = strlen(fileName);
+	if(fileName[laenge-4] != '.' || fileName[laenge-3] != 't' || fileName[laenge-2] != 'x' || fileName[laenge-1] != 't') {
+		printf("falsches Dateiformat");
+	} else {
+		printf("Korrekt: %s\n", fileName);
+	}
+	return laenge;
+}
+
+
+char* patternPut = "^[).,_a-zA-Z0-9(-]+$";
+regex_t regexGet;
+regex_t regexPut;
 
 long long storage_size_limit = 10 * 1000;
 char *dir = "./store";
@@ -36,17 +55,15 @@ void read_conn(const struct epoll_event *event) {
 
 	char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
 	ssize_t count = read(connection, buf, READ_BUF_SIZE);
-
 	if (count < 0) {
 		// If errno == EAGAIN, that means we have read all data. So go back to the main loop.
 		if (errno != EAGAIN) {
 			perror("[Server] read");
 		}
-		return;
+		return; // TODO return richtig?
 	} else if (count == 0) {
 		return;
 	} else {
-
 		if (strcmp(buf, "clients\r\n\004") == 0) {
 			char ret[1500] = {0};
 			string_sockaddrs(ret);
@@ -92,7 +109,7 @@ void read_conn(const struct epoll_event *event) {
 
 			char* ret = NULL;
 			size_t size = 0;
-			FILE *ret_stream = open_memstream(&ret, &size); 
+			FILE *ret_stream = open_memstream(&ret, &size);
 			printf("|%s|\n", fileName);
 			struct stat st;
 			if (stat(fileName, &st) == -1) {
@@ -112,7 +129,7 @@ void read_conn(const struct epoll_event *event) {
 			FILE *fp = fopen(fileName, "r");
 			if (fp == NULL) {
 				perror("fopen failed");  // Shows why fopen failed (file not found, permissions, etc.)
-				return;	
+				return;
 			}
 			while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
 				fwrite(chunk, 1, n, ret_stream);
@@ -147,13 +164,73 @@ void read_conn(const struct epoll_event *event) {
 			fprintf(fptr, "%s", content);
 			fclose(fptr);
 			printf("[Server] Fertig geschrieben!\n");
-
 			char tim[20];
 			char ret[40];
 			time_t now = time(NULL);
 			strftime(tim, 20, "%X", localtime(&now));
 			sprintf(ret, "%s\r\n%s\r\n\004", STATUS_OK, tim);
 			write(connection, ret, strlen(ret));
+
+      } if(strncmp(buf, "get", 3) == 0) { // Tims Impl
+        char fileName[50] = {0};
+        char content[READ_BUF_SIZE] = "";
+      	char lineBuf[READ_BUF_SIZE] = {0};
+        char* firstSpace = strchr(buf, ' ');
+        char* firstLineBreak = strchr(buf, '\r\n');
+        strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+      	//Absoluten Pfad herausfinden
+      	char* realPathName = realpath(dir, NULL);
+      	strcat(realPathName, "/");
+      	strcat(realPathName, fileName);
+      	FILE *fptr = fopen(realPathName, "r");
+      	//Prüfen, ob Datei existiert, falls nicht, wird dies geantwortet
+      	if(fptr == NULL) {
+      		perror("[Server] Datei unbekannt:");
+      		write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
+      		fflush(stdout);
+      		return;
+      	}
+      		while(fgets(lineBuf, READ_BUF_SIZE, fptr) != NULL) {
+      			strcat(content, lineBuf);
+      		}
+        	fclose(fptr);
+        	char tim[20];
+        	struct stat attrib;
+        	stat(fileName, &attrib);
+        	strftime(tim, 20, "%X", localtime(&attrib.st_mtime));
+        	char ret[1500];
+        	sprintf(ret, "Datei-Attribute: \nZuletzt bearbeitet: %s\nDateigröße: %lu\r\nInhalt: %s\r\n\004", tim, attrib.st_size , content);
+        	write(connection, ret, strlen(ret));
+        	return;
+      }
+		if(strncmp(buf, "put", 3) == 0) {
+        char fileName[50] = {0};
+        char content[1000] = {0};
+        char* firstSpace = strchr(buf, ' ');
+        char* firstLineBreak = strchr(buf, '\r\n');
+        char* eOT = strchr(buf, '\004');
+        strncpy(fileName, firstSpace+1, firstLineBreak-buf-5);
+			//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
+      	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL,0 );
+      	if(dateiNameTest == 0) {
+      		//Absoluten Pfad für die Datei herausfinden
+      		char* realPathName = realpath(dir, NULL);
+      		strcat(realPathName, "/");
+      		strcat(realPathName, fileName);
+      		printf("%s\n", realPathName);
+      		strncpy(content, firstLineBreak+3, eOT-firstLineBreak-5);
+      		//Datei anlegen und Inhalt hineinschreiben
+      		FILE *fptr;
+      		fptr = fopen(realPathName, "w");
+      		fprintf(fptr, "%s", content);
+      		fclose(fptr);
+      		printf("[Server] Fertig geschrieben!\n");
+      	} else {
+      		write(connection, "Dateiname ungültig\n", strlen("Dateiname ungültig\n"));
+      		fflush(stdout);
+      		return;
+      	}
+
 		} else if (strcmp(buf, "quit\r\n\004") == 0) {
 			close(connection);
 			remove_sockaddr(connection);
@@ -200,6 +277,15 @@ long long get_dir_size(const char *path) {
 }
 
 int main(int argc, char **argv) {
+
+	int retiGet = regcomp(&regexGet, REGEX_GET, REG_EXTENDED);
+	if (retiGet != 0) {
+		fprintf(stderr, "regcomp failed\n");
+	}
+	int retiPut = regcomp(&regexPut, patternPut, REG_EXTENDED);
+	if (retiPut != 0) {
+		fprintf(stderr, "regcomp failed\n");
+	}
 	int port = 0;
 	opterr = 0;
 	struct stat st = {0};
@@ -240,7 +326,8 @@ int main(int argc, char **argv) {
 	if (stat(dir, &st) == -1) {
 		mkdir(dir, 0700);
 	}
-
+	printf("%s\n", dir);
+	printf("%s\n", realpath(dir, NULL));
 	long long dirSize = get_dir_size(dir);
 
 	//check size of directory

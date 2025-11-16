@@ -6,11 +6,13 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
+#include <regex.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
 #define MAX_LEN 1500
 #define READ_BUF_SIZE 1500
+#define REGEX_PUT "put[[:space:]][a-zA-Z0-9_-]*\\.txt\\r\\n\\r\\n[\\0-\\377]*\\r\\n\\004.*"
 
 int dflag = 0;
 
