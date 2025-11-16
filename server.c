@@ -149,18 +149,50 @@ void cmd_get(int connection, char *buf) {
 void cmd_put(int connection, char *buf) {
 	char fileName[50] = {0};
 	char content[BUF_SIZE] = {0};
+	char *findEOT = memchr(buf, '\004', BUF_SIZE);
 	char *firstSpace = strchr(buf, ' ');
 	char *firstLineBreak = strchr(buf, '\r\n');
-	char *eOT = strchr(buf, '\004');
 	strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
 	//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
 	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL, 0);
+	//char* memStreamBuf;
+	//size_t memStreamBufSize = 0;
 	if (dateiNameTest == 0) {
 		//Absoluten Pfad für die Datei herausfinden
 		char *realPathName = realpath(dir, NULL);
 		strcat(realPathName, "/");
 		strcat(realPathName, fileName);
-
+		FILE *fptr = fopen(realPathName, "w");
+		if(findEOT) {
+			printf("debug1\n");
+			const char *eOT = strchr(buf, '\004');
+			strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
+			fprintf(fptr, "%s", content);
+			fclose(fptr);
+		} else {
+			printf("debug2\n");
+			//FILE *memptr = open_memstream(&memStreamBuf, &memStreamBufSize);
+			strncpy(content, firstLineBreak + 3, BUF_SIZE-strlen(fileName)-4);
+			while(1) {
+				printf("debug3\n");
+				fptr = fopen(realPathName, "a");
+				fprintf(fptr, "%s", content);
+				//fwrite(content, sizeof(char), BUF_SIZE, memptr);
+				ssize_t count = read(connection, content, BUF_SIZE);
+				findEOT = strchr(content, '\004');
+				if(findEOT) {
+					printf("debug4\n");
+					break;
+				}
+			}
+			printf("debug5\n");
+			content[strlen(content)-1] = '\0';
+			fprintf(fptr, "%s", content);
+			//fwrite(content, sizeof(char), strlen(content)-1, memptr);
+			//fclose(memptr);
+			//fwrite(memStreamBuf, sizeof(char), memStreamBufSize, fptr);
+			fclose(fptr);
+		}
 		// TODO Datei ist leer
 		/*if (*(firstLineBreak+2) == '\004') {
 			char ret[22] = "NOK ";
@@ -171,18 +203,12 @@ void cmd_put(int connection, char *buf) {
 			write(connection, ret, strlen(ret));
 		}*/
 		// TODO mehrmals read(buf) bis read \004 findet. Ähnlich wie im Client beim lesen der Antwort. Am besten FILE *in_stream = open_memstream(&buf, &size) benutzen. Damit kann man dynamisch an einen String(stream) anhängen.
-		strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
-		//Datei anlegen und Inhalt hineinschreiben
-		FILE *fptr;
-		fptr = fopen(realPathName, "w");
-		fprintf(fptr, "%s", content);
-		fclose(fptr);
 
+		//Datei anlegen und Inhalt hineinschreiben
 		char ret[21] = "OK ";
 		time_t now = time(NULL);
 		strftime(ret+3, 18, "%x-%X", localtime(&now));
 		strcat(ret, "\r\n\004");
-
 		write(connection, ret, strlen(ret));
 	} else {
 		char ret[22] = "NOK ";

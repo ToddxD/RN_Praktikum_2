@@ -91,7 +91,7 @@ int main(int argc, char **argv) {
 		int i = 0;
 		while (1) {
 			char ch = getchar();
-			if (ch == '#' || i >= (MAX_LEN - 3)) {
+			if (ch == '#'){ //|| i >= (MAX_LEN - 3)) {
 				break;
 			}
 			if (ch == '\n') { // Für CR LF muss hier \r zusätzlich hinzugefügt werden.
