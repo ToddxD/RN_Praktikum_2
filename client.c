@@ -11,7 +11,7 @@
 #include <unistd.h>
 
 #define MAX_LEN 1500
-#define READ_BUF_SIZE 1500
+#define BUF_SIZE 1500
 #define REGEX_PUT "put[[:space:]][a-zA-Z0-9_-]*\\.txt\\r\\n\\r\\n[\\0-\\377]*\\r\\n\\004.*"
 
 int dflag = 0;
@@ -82,16 +82,11 @@ int main(int argc, char **argv) {
 		return -1;
 	}
 
-	// clients\n\004
-	// files\n\004
-	// get datei.txt\n\004
-	// put datei.txt\n\nINHALT\004
-	// quit\n\004
-
-	char *buff = malloc((MAX_LEN - 3) * sizeof(char));
-	char *paket = malloc(MAX_LEN * sizeof(char));
 	while (1) {
-		memset(buff, 0, (MAX_LEN - 3));
+		char *buf = NULL;
+		size_t size = 0;
+		FILE *in_stream = open_memstream(&buf, &size);
+
 		printf("[Client] enter command:\n");
 		int i = 0;
 		while (1) {
@@ -103,35 +98,55 @@ int main(int argc, char **argv) {
 				if (i == 0) {
 					continue;
 				}
-				buff[i] = '\r';
+				fputc('\r', in_stream);
 				i++;
 			}
-			buff[i] = ch;
+			fputc(ch, in_stream);
 			i++;
 		}
 
-
-		if (strcmp(buff, "quit") == 0) {
-			//shutdown(sock, SHUT_WR);
+		fwrite("\r\n\004", sizeof(char), 4, in_stream); // EOT hinzufügen
+		fclose(in_stream);
+		
+		if (strcmp(buf, "quit\r\n\004") == 0) {
+			write(sock, buf, strlen(buf));
 			close(sock);
+
 			printf("[Client] closed\n");
+			free(buf);
 			return 0;
 		}
 
-		strcpy(paket, buff);
-		strcat(paket, "\r\n\004");
-
-		// TODO Laut Aufgabe auch mehrere Pakete, wenn größer 1500
-		if (write(sock, paket, strlen(paket)) < 0) {
-			perror("Fehler beim Senden des Pakets");
-			return -1;
+		// Sende Anfrage
+		size_t total_sent = 0;
+		char *offset = buf;
+		while (total_sent < size) {
+			size_t n = write(sock, offset + total_sent, BUF_SIZE);
+			if (n < 0) {
+				perror("[Server] error sending file data");
+				free(buf);
+				return -1;
+			}
+			total_sent += n;
 		}
-		printf("[Client] paket sent: %s\n", paket);
+		
+		printf("[Client] paket sent: %s\n", buf);
+		printf("[Client] answer:\n");
 
-		char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
-		read(sock, buf, READ_BUF_SIZE);
+		// Lese Antwort
+		char *antwort_buf = calloc(BUF_SIZE, sizeof(char));
+		while (1) {
+			read(sock, antwort_buf, BUF_SIZE);
+			printf("%s\n", antwort_buf);
 
-		printf("[Client] paket received:\n");
-		printf("%s\n", buf);
+			char *eot = memchr(antwort_buf, '\004', BUF_SIZE); // EOT finden und abbrechen
+			if (eot) {
+				break;
+			}
+		}
+
+		printf("[Client] paket received\n");
+		free(antwort_buf);
+		free(buf);
 	}
 }

@@ -20,14 +20,22 @@
 
 #define SERVER "127.0.0.10"
 
-#define READ_BUF_SIZE 1500
+#define BUF_SIZE 1500
 
 #define MAX_EVENTS 10 // Wie viele Clients gleichzeitig kommunizieren können
 
 #define STATUS_OK "OK"
 #define REGEX_PUT "[^~./]+"
 #define REGEX_GET "get [a-zA-Z0-9_-]+\\.txt\\r\\n\\004"
-#define RESP_FNOTFOUND "Datei nicht gefunden, bitte Namen überprüfen\n"
+#define RESP_FNOTFOUND "Datei nicht gefunden, bitte Namen überprüfen\r\n\004"
+
+char *patternPut = "^[).,_a-zA-Z0-9(-]+$";
+regex_t regexGet;
+regex_t regexPut;
+
+long long storage_size_limit = 10 * 1000;
+char *dir = "./store";
+
 
 int testDateiNameAufEndung(char *fileName) {
 	int laenge = strlen(fileName);
@@ -40,136 +48,172 @@ int testDateiNameAufEndung(char *fileName) {
 	return laenge;
 }
 
+void cmd_clients(int connection)
+{
+    char ret[BUF_SIZE] = {0};
+    string_sockaddrs(ret);
+    strcat(ret, "\r\n\004");
+    write(connection, ret, sizeof(ret));
+}
 
-char *patternPut = "^[).,_a-zA-Z0-9(-]+$";
-regex_t regexGet;
-regex_t regexPut;
+void cmd_files(int connection) {
+	DIR *directory;
+	struct dirent *ent;
+	char ret[BUF_SIZE] = {0};
 
-long long storage_size_limit = 10 * 1000;
-char *dir = "./store";
+	if ((directory = opendir(dir)) != NULL) {
+		while ((ent = readdir(directory)) != NULL) {
+			struct stat st;
+			char *filename = ent->d_name;
+			stat(filename, &st);
+
+			char tim[30] = {0};
+			strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
+
+			char formatted[sizeof(tim) + sizeof(filename) + 10] = {0};
+			sprintf(formatted, "%s %s,%ldB\r\n", filename, tim, st.st_size);
+			strcat(ret, formatted);
+		}
+		strcat(ret, "\r\n\004");
+		write(connection, ret, sizeof(ret));
+		closedir(directory);
+	}
+}
+
+void cmd_get(int connection, char *buf) {
+	// filename extrahieren
+	char fileName[100] = {0};
+	char *firstSpace = strchr(buf, ' ');
+	char *firstLineBreak = strchr(buf, '\r\n');
+
+	if (firstSpace == NULL || firstLineBreak == NULL) {
+		char *ret = "invalid command\r\n\004";
+		write(connection, ret, strlen(ret));
+		return;
+	}
+
+	int fileNameLen = firstLineBreak - firstSpace - 1;
+	strcpy(fileName, dir);
+	strcat(fileName, "/");
+	strncat(fileName, firstSpace + 1, fileNameLen);
+	fileName[strlen(dir) + fileNameLen] = '\0';
+
+
+	// Zugriffzeitpunkt und Größe ermitteln
+	char *ret = NULL;
+	size_t size = 0;
+	FILE *ret_stream = open_memstream(&ret, &size);
+	struct stat st;
+	if (stat(fileName, &st) == -1) {
+		write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
+		fclose(ret_stream);
+		free(ret);
+		return;
+	}
+	char tim[30] = {0};
+	strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
+	fprintf(ret_stream, "%s,%ldB\r\n\r\n", tim, st.st_size);
+
+
+	// Dateiinhalt einfügen
+	char chunk[512];
+	size_t n;
+	FILE *fp = fopen(fileName, "r");
+	if (fp == NULL) {
+		write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
+		fclose(ret_stream);
+		free(ret);
+		return;
+	}
+	while ((n = fread(chunk, sizeof(char), sizeof(chunk), fp)) > 0) {
+		fwrite(chunk, sizeof(char), n, ret_stream);
+	}
+	fclose(fp);
+	fprintf(ret_stream, "\004");
+	fclose(ret_stream);
+
+	size_t total_sent = 0;
+	char *offset = ret;
+	while (total_sent < size) {
+		size_t n = write(connection, offset + total_sent, BUF_SIZE);
+		if (n < 0) {
+			perror("[Server] error sending file data");
+			free(ret);
+			return;
+		}
+		total_sent += n;
+	}
+	free(ret);
+}
+
+void cmd_put(int connection, char *buf) {
+	char fileName[50] = {0};
+	char content[BUF_SIZE] = {0};
+	char *firstSpace = strchr(buf, ' ');
+	char *firstLineBreak = strchr(buf, '\r\n');
+	char *eOT = strchr(buf, '\004');
+	strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
+	//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
+	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL, 0);
+	if (dateiNameTest == 0) {
+		//Absoluten Pfad für die Datei herausfinden
+		char *realPathName = realpath(dir, NULL);
+		strcat(realPathName, "/");
+		strcat(realPathName, fileName);
+
+		// TODO Datei ist leer
+		/*if (*(firstLineBreak+2) == '\004') {
+			char ret[22] = "NOK ";
+			time_t now = time(NULL);
+			strftime(ret+4, 18, "%x-%X", localtime(&now));
+			strcat(ret, "\r\n\004");
+
+			write(connection, ret, strlen(ret));
+		}*/
+		// TODO mehrmals read(buf) bis read \004 findet. Ähnlich wie im Client beim lesen der Antwort. Am besten FILE *in_stream = open_memstream(&buf, &size) benutzen. Damit kann man dynamisch an einen String(stream) anhängen.
+		strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
+		//Datei anlegen und Inhalt hineinschreiben
+		FILE *fptr;
+		fptr = fopen(realPathName, "w");
+		fprintf(fptr, "%s", content);
+		fclose(fptr);
+
+		char ret[21] = "OK ";
+		time_t now = time(NULL);
+		strftime(ret+3, 18, "%x-%X", localtime(&now));
+		strcat(ret, "\r\n\004");
+
+		write(connection, ret, strlen(ret));
+	} else {
+		char ret[22] = "NOK ";
+		time_t now = time(NULL);
+		strftime(ret+4, 18, "%x-%X", localtime(&now));
+		strcat(ret, "\r\n\004");
+
+		write(connection, ret, strlen(ret));
+	}
+}
 
 void read_conn(const struct epoll_event *event) {
 	int connection = event->data.fd;
 
-
-	printf("[Server] message start:\n");
-
-	char *buf = calloc(READ_BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
-	ssize_t count = read(connection, buf, READ_BUF_SIZE);
-	if (count < 0) {
-		// If errno == EAGAIN, that means we have read all data. So go back to the main loop.
+	char *buf = calloc(BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
+	ssize_t count = read(connection, buf, BUF_SIZE);
+	if (count <= 0) {
 		if (errno != EAGAIN) {
-			perror("[Server] read");
+			perror("[Server] read failed");
+			close(connection);
+			remove_sockaddr(connection);
 		}
-		return; // TODO return richtig?
-	} else if (count == 0) {
-		return;
 	} else {
 		if (strcmp(buf, "clients\r\n\004") == 0) {
-			char ret[1500] = {0};
-			string_sockaddrs(ret);
-			strcat(ret, "\r\n\0004");
-			write(connection, ret, sizeof(ret));
-		} else if (strcmp(buf, "files\r\n\004") == 0) {
-			DIR *directory;
-			struct dirent *ent;
-			char ret[1500] = {0};
-
-			if ((directory = opendir(dir)) != NULL) {
-				while ((ent = readdir(directory)) != NULL) {
-					struct stat st;
-					char *filename = ent->d_name;
-					stat(filename, &st);
-					char tim[30] = {0};
-					strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
-					char formatted[sizeof(tim) + sizeof(filename) + 10] = {0};
-					sprintf(formatted, "%s %s,%ldB\r\n", filename, tim, st.st_size);
-					strcat(ret, formatted);
-				}
-				strcat(ret, "\r\n\004");
-				write(connection, ret, sizeof(ret));
-				closedir(directory);
-			}
+            cmd_clients(connection);
+        } else if (strcmp(buf, "files\r\n\004") == 0) {
+			cmd_files(connection);
 		} else if (strncmp(buf, "get", 3) == 0) {
-			char fileName[100] = {0};
-			char *firstSpace = strchr(buf, ' ');
-			char *firstLineBreak = strchr(buf, '\r\n');
-
-			if (firstSpace == NULL || firstLineBreak == NULL) {
-				char *ret = "invalid command\r\n\004";
-				write(connection, ret, strlen(ret));
-				free(buf);
-				return;
-			}
-
-			int fileNameLen = firstLineBreak - firstSpace - 1;
-			strcpy(fileName, dir);
-			strcat(fileName, "/");
-			strncat(fileName, firstSpace + 1, fileNameLen);
-			fileName[strlen(dir) + fileNameLen] = '\0';
-
-			char *ret = NULL;
-			size_t size = 0;
-			FILE *ret_stream = open_memstream(&ret, &size);
-			printf("|%s|\n", fileName);
-			struct stat st;
-			if (stat(fileName, &st) == -1) {
-				write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
-				fclose(ret_stream);
-				free(ret);
-				free(buf);
-				return;
-			}
-			char tim[30] = {0};
-			strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
-			fprintf(ret_stream, "%s,%ldB\r\n\r\n", tim, st.st_size);
-			char chunk[512];
-			size_t n;
-			FILE *fp = fopen(fileName, "r");
-			if (fp == NULL) {
-				write(connection, RESP_FNOTFOUND, strlen(RESP_FNOTFOUND));
-				fclose(ret_stream);
-				free(ret);
-				free(buf);
-				return;
-			}
-			while ((n = fread(chunk, 1, sizeof(chunk), fp)) > 0) {
-				fwrite(chunk, 1, n, ret_stream);
-			}
-			fclose(fp);
-			fprintf(ret_stream, "\004");
-			fclose(ret_stream);
-			write(connection, ret, size);
-			free(ret);
+			cmd_get(connection, buf);
 		} else if (strncmp(buf, "put", 3) == 0) {
-			char fileName[50] = {0};
-			char content[1000] = {0};
-			char *firstSpace = strchr(buf, ' ');
-			char *firstLineBreak = strchr(buf, '\r\n');
-			char *eOT = strchr(buf, '\004');
-			strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
-			//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
-			int dateiNameTest = regexec(&regexPut, fileName, 0, NULL, 0);
-			if (dateiNameTest == 0) {
-				//Absoluten Pfad für die Datei herausfinden
-				char *realPathName = realpath(dir, NULL);
-				strcat(realPathName, "/");
-				strcat(realPathName, fileName);
-				printf("%s\n", realPathName);
-				strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
-				//Datei anlegen und Inhalt hineinschreiben
-				FILE *fptr;
-				fptr = fopen(realPathName, "w");
-				fprintf(fptr, "%s", content);
-				fclose(fptr);
-				printf("[Server] Fertig geschrieben!\n");
-			} else {
-				write(connection, "Dateiname ungültig\n", strlen("Dateiname ungültig\n"));
-				//fflush(stdout); // TODO warum?
-				free(buf);
-				return;
-			}
-
+			cmd_put(connection, buf);
 		} else if (strcmp(buf, "quit\r\n\004") == 0) {
 			close(connection);
 			remove_sockaddr(connection);
@@ -181,8 +225,9 @@ void read_conn(const struct epoll_event *event) {
 	free(buf);
 }
 
-long long get_dir_size(const char *path) {
-	struct stat st;
+long long get_dir_size(const char *path)
+{
+    struct stat st;
 	long long total_size = 0;
 
 	DIR *dir = opendir(path);
@@ -235,7 +280,7 @@ int main(int argc, char **argv) {
 		switch (c) {
 			case 'p':
 				port = (int) strtol(optarg, NULL, 10);
-				printf("Port %d selected\n", port);
+				printf("[Server] Port %d selected\n", port);
 				break;
 			case 's':
 				if (optarg[0] != '.') {
@@ -258,20 +303,19 @@ int main(int argc, char **argv) {
 				fprintf(stderr, "Unknown Option '-%c'. Use -h for help.\n", optopt);
 				return -1;
 			default:
-				printf("Starting server using default configuration.\n");
+				printf("[Server] Starting server using default configuration.\n");
 		}
 
 	//create storage directory
 	if (stat(dir, &st) == -1) {
 		mkdir(dir, 0700);
 	}
-	printf("%s\n", dir);
-	printf("%s\n", realpath(dir, NULL));
+	printf("[Server] Directory: %s\n", dir);
 	long long dirSize = get_dir_size(dir);
 
 	//check size of directory
 	if (dirSize > storage_size_limit) {
-		printf("Directory exceeds size limit, %lld kB > %lld kB\n", dirSize, storage_size_limit);
+		printf("[Server] Directory exceeds size limit, %lld kB > %lld kB\n", dirSize, storage_size_limit);
 		return EXIT_FAILURE;
 	}
 
@@ -298,7 +342,7 @@ int main(int argc, char **argv) {
 	}
 
 	getsockname(sock, (struct sockaddr *) &socket_address_server, &addr_len);
-	printf("Server listening on Port: %d\n", ntohs(socket_address_server.sin_port));
+	printf("[Server] listening on Port: %d\n", ntohs(socket_address_server.sin_port));
 
 
 	if (listen(sock, 100) < 0) {
@@ -330,13 +374,14 @@ int main(int argc, char **argv) {
 				(events[i].events & EPOLLHUP) ||
 				(!(events[i].events & EPOLLIN))) {
 				printf("[Server] epoll error\n");
+				remove_sockaddr(events[i].data.fd);
 				close(events[i].data.fd);
 			} else if (events[i].data.fd == sock) { // Event kommt vom Socket
 				struct sockaddr_in con_addr;
 				socklen_t laenge = sizeof(con_addr);
 				// Handshake
 				int connection = accept(sock, (struct sockaddr *) &con_addr, &laenge);
-				add_sockaddr(con_addr, connection); // TODO Errorhandling
+				add_sockaddr(con_addr, connection);
 
 				if (connection < 0) {
 					perror("[Server] accept error");
@@ -348,14 +393,9 @@ int main(int argc, char **argv) {
 				if (epoll_ctl(epoll, EPOLL_CTL_ADD, connection, &event) < 0) {
 					perror("[Server] couldn't add connection");
 				}
-				printf("[Server] added connection to epoll\n");
 
 			} else { // Wenn das Event von der Verbindung und nicht vom socket kommt, dann kann gelesen werden
-
 				read_conn(events + i);
-
-				//close(sock);
-				//return 0;
 			}
 		}
 
