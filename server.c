@@ -164,28 +164,23 @@ void cmd_put(int connection, char *buf) {
 		strcat(realPathName, fileName);
 		FILE *fptr = fopen(realPathName, "w");
 		if(findEOT) {
-			printf("debug1\n");
 			const char *eOT = strchr(buf, '\004');
 			strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
 			fprintf(fptr, "%s", content);
 			fclose(fptr);
 		} else {
-			printf("debug2\n");
 			//FILE *memptr = open_memstream(&memStreamBuf, &memStreamBufSize);
 			strncpy(content, firstLineBreak + 3, BUF_SIZE-strlen(fileName)-4);
 			while(1) {
-				printf("debug3\n");
 				fptr = fopen(realPathName, "a");
 				fprintf(fptr, "%s", content);
 				//fwrite(content, sizeof(char), BUF_SIZE, memptr);
 				ssize_t count = read(connection, content, BUF_SIZE);
 				findEOT = strchr(content, '\004');
 				if(findEOT) {
-					printf("debug4\n");
 					break;
 				}
 			}
-			printf("debug5\n");
 			content[strlen(content)-1] = '\0';
 			fprintf(fptr, "%s", content);
 			//fwrite(content, sizeof(char), strlen(content)-1, memptr);
