@@ -12,7 +12,8 @@
 
 #define MAX_LEN 1500
 #define BUF_SIZE 1500
-#define REGEX_PUT "put[[:space:]][a-zA-Z0-9_-]*\\.txt\\r\\n\\r\\n[\\0-\\377]*\\r\\n\\004.*"
+
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 int dflag = 0;
 
@@ -91,8 +92,15 @@ int main(int argc, char **argv) {
 		int i = 0;
 		while (1) {
 			char ch = getchar();
-			if (ch == '#'){ //|| i >= (MAX_LEN - 3)) {
-				break;
+			if (ch == '#'){
+				char ch2= getchar(); //|| i >= (MAX_LEN - 3)) {
+				if (ch2 == '\n') {
+					break;
+				}
+				fputc(ch, in_stream);
+				fputc(ch2, in_stream);
+				i+=2;
+				continue;
 			}
 			if (ch == '\n') { // Für CR LF muss hier \r zusätzlich hinzugefügt werden.
 				if (i == 0) {
@@ -121,7 +129,7 @@ int main(int argc, char **argv) {
 		size_t total_sent = 0;
 		char *offset = buf;
 		while (total_sent < size) {
-			size_t n = write(sock, offset + total_sent, BUF_SIZE);
+			size_t n = write(sock, offset + total_sent, MIN(BUF_SIZE, size - total_sent));
 			if (n < 0) {
 				perror("[Server] error sending file data");
 				free(buf);

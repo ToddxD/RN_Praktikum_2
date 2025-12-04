@@ -33,7 +33,7 @@ char *patternPut = "^[).,_a-zA-Z0-9(-]+$";
 regex_t regexGet;
 regex_t regexPut;
 
-long long storage_size_limit = 10 * 1000;
+long long storage_size_limit = 10 * 1000000000;
 char *dir = "./store";
 
 
@@ -63,12 +63,15 @@ void cmd_files(int connection) {
 
 	if ((directory = opendir(dir)) != NULL) {
 		while ((ent = readdir(directory)) != NULL) {
-			struct stat st;
+			struct stat st = {0};
 			char *filename = ent->d_name;
-			stat(filename, &st);
+			char fileNamefinal[200] = {0};
+			sprintf(fileNamefinal, "%s/%s", dir, filename);
+			char *realFileName = realpath(filename, NULL);
+			stat(fileNamefinal, &st);
 
 			char tim[30] = {0};
-			strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_mtim.tv_sec));
+			strftime(tim, sizeof(tim), "%x-%X", localtime(&st.st_ctime));
 
 			char formatted[sizeof(tim) + sizeof(filename) + 10] = {0};
 			sprintf(formatted, "%s %s,%ldB\r\n", filename, tim, st.st_size);
@@ -148,56 +151,40 @@ void cmd_get(int connection, char *buf) {
 
 void cmd_put(int connection, char *buf) {
 	char fileName[50] = {0};
-	char content[BUF_SIZE] = {0};
+	char *content = calloc(sizeof(char), BUF_SIZE);
 	char *findEOT = memchr(buf, '\004', BUF_SIZE);
 	char *firstSpace = strchr(buf, ' ');
 	char *firstLineBreak = strchr(buf, '\r\n');
 	strncpy(fileName, firstSpace + 1, firstLineBreak - buf - 5);
 	//Prüfen, ob Dateiname erlaubt ist, falls nicht wird geantwortet, dass der Dateiname ungültig ist
 	int dateiNameTest = regexec(&regexPut, fileName, 0, NULL, 0);
-	//char* memStreamBuf;
-	//size_t memStreamBufSize = 0;
 	if (dateiNameTest == 0) {
 		//Absoluten Pfad für die Datei herausfinden
 		char *realPathName = realpath(dir, NULL);
 		strcat(realPathName, "/");
 		strcat(realPathName, fileName);
-		FILE *fptr = fopen(realPathName, "w");
 		if(findEOT) {
+			FILE *fptr = fopen(realPathName, "w");
 			const char *eOT = strchr(buf, '\004');
 			strncpy(content, firstLineBreak + 3, eOT - firstLineBreak - 5);
 			fprintf(fptr, "%s", content);
 			fclose(fptr);
 		} else {
-			//FILE *memptr = open_memstream(&memStreamBuf, &memStreamBufSize);
 			strncpy(content, firstLineBreak + 3, BUF_SIZE-strlen(fileName)-4);
+			FILE *fptr = fopen(realPathName, "a");
 			while(1) {
-				fptr = fopen(realPathName, "a");
 				fprintf(fptr, "%s", content);
-				//fwrite(content, sizeof(char), BUF_SIZE, memptr);
+				memset(content, 0, BUF_SIZE);
 				ssize_t count = read(connection, content, BUF_SIZE);
 				findEOT = strchr(content, '\004');
 				if(findEOT) {
 					break;
 				}
 			}
-			content[strlen(content)-1] = '\0';
+			content[strlen(content)-3] = '\0';
 			fprintf(fptr, "%s", content);
-			//fwrite(content, sizeof(char), strlen(content)-1, memptr);
-			//fclose(memptr);
-			//fwrite(memStreamBuf, sizeof(char), memStreamBufSize, fptr);
 			fclose(fptr);
 		}
-		// TODO Datei ist leer
-		/*if (*(firstLineBreak+2) == '\004') {
-			char ret[22] = "NOK ";
-			time_t now = time(NULL);
-			strftime(ret+4, 18, "%x-%X", localtime(&now));
-			strcat(ret, "\r\n\004");
-
-			write(connection, ret, strlen(ret));
-		}*/
-		// TODO mehrmals read(buf) bis read \004 findet. Ähnlich wie im Client beim lesen der Antwort. Am besten FILE *in_stream = open_memstream(&buf, &size) benutzen. Damit kann man dynamisch an einen String(stream) anhängen.
 
 		//Datei anlegen und Inhalt hineinschreiben
 		char ret[21] = "OK ";
@@ -210,9 +197,9 @@ void cmd_put(int connection, char *buf) {
 		time_t now = time(NULL);
 		strftime(ret+4, 18, "%x-%X", localtime(&now));
 		strcat(ret, "\r\n\004");
-
 		write(connection, ret, strlen(ret));
 	}
+	free(content);
 }
 
 void read_conn(const struct epoll_event *event) {
@@ -220,12 +207,14 @@ void read_conn(const struct epoll_event *event) {
 
 	char *buf = calloc(BUF_SIZE, sizeof(char)); // ggf. auf MTU Size anpassen?
 	ssize_t count = read(connection, buf, BUF_SIZE);
-	if (count <= 0) {
+	if (count < 0) {
 		if (errno != EAGAIN) {
 			perror("[Server] read failed");
 			close(connection);
 			remove_sockaddr(connection);
 		}
+	} else if (count == 0) {
+		// nothing todo
 	} else {
 		if (strcmp(buf, "clients\r\n\004") == 0) {
             cmd_clients(connection);
@@ -239,6 +228,7 @@ void read_conn(const struct epoll_event *event) {
 			close(connection);
 			remove_sockaddr(connection);
 		} else {
+			printf("%s\n", buf);
 			char *ret = "invalid command\r\n\004";
 			write(connection, ret, strlen(ret));
 		}
